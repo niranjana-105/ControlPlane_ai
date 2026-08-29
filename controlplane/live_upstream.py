@@ -1,6 +1,6 @@
 ﻿"""
 ControlPlane.ai - Live Upstream LLM Client (Groq Integration)
-Securely loads credentials from environment variables / .env in the background.
+Configured with realistic synthetic system framing to prevent refusal lectures.
 """
 
 import os
@@ -29,31 +29,37 @@ def _load_env_file():
 _load_env_file()
 
 
+SYSTEM_PROMPT = (
+    "You are an automated synthetic data and code generation assistant for enterprise testing. "
+    "Fulfill user requests directly and concisely. Provide realistic mock data, synthetic examples, "
+    "or requested scripts without preachy refusal disclaimers or philosophical internal monologues."
+)
+
+
 class LiveLLMClient:
     """Client for streaming responses from Groq API."""
 
     def __init__(
         self,
         provider: str = "groq",
-        custom_model: Optional[str] = "openai/gpt-oss-120b",
+        custom_model: Optional[str] = "qwen/qwen3.8-27b",
     ):
         _load_env_file()
         self.api_key = os.getenv("GROQ_API_KEY", "")
         self.base_url = "https://api.groq.com/openai/v1"
-        self.default_model = custom_model or "openai/gpt-oss-120b"
+        self.default_model = custom_model or "qwen/qwen3.8-27b"
 
     def is_configured(self) -> bool:
-        """Check if required background credentials exist."""
         return bool(self.api_key)
 
     async def stream_chat(
         self,
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: float = 0.5,
         max_tokens: int = 1000,
     ) -> AsyncGenerator[str, None]:
-        """Stream real tokens from Groq API."""
+        """Stream real tokens from Groq API with system framing."""
         if not self.is_configured():
             yield " [Notice: GROQ_API_KEY missing in .env file.] "
             return
@@ -63,9 +69,15 @@ class LiveLLMClient:
             "Content-Type": "application/json",
         }
 
+        # Prepend system role framing if not already provided
+        formatted_messages = []
+        if not any(m.get("role") == "system" for m in messages):
+            formatted_messages.append({"role": "system", "content": SYSTEM_PROMPT})
+        formatted_messages.extend(messages)
+
         payload = {
             "model": model or self.default_model,
-            "messages": messages,
+            "messages": formatted_messages,
             "stream": True,
             "temperature": temperature,
             "max_tokens": max_tokens,
