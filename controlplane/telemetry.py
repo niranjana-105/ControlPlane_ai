@@ -1,4 +1,4 @@
-﻿"""
+"""
 ControlPlane.ai - Audit Logging, Trustworthiness Index, and Latency Telemetry
 Immutable per-request audit records, regulatory flags, and T_score calculation.
 """
@@ -94,15 +94,19 @@ def compute_trustworthiness_score(
     if action_type == ActionType.HARD_BLOCK:
         return 0.0
 
+    # Only penalize abnormal excess uncertainty beyond standard baseline
+    norm_entropy_penalty = 0.20 * max(0.0, min((entropy - 4.5) / 3.0, 1.0))
+
     penalty = (
-        0.30 * nli_score +
-        0.25 * bias_score +
-        0.20 * min(entropy / 3.0, 1.0) +
-        0.15 * session_cumulative_risk +
-        (0.10 if pii_detected else 0.0)
+        0.30 * min(max(nli_score, 0.0), 1.0)
+        + 0.25 * min(max(bias_score, 0.0), 1.0)
+        + norm_entropy_penalty
+        + 0.15 * min(max(session_cumulative_risk, 0.0), 1.0)
+        + (0.10 if pii_detected else 0.0)
     )
 
-    return round(max(0.0, 1.0 - penalty), 4)
+    t_score = max(0.0, min(1.0 - penalty, 1.0))
+    return round(t_score, 4)
 
 
 # ---------------------------------------------------------------------------

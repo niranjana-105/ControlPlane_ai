@@ -1,4 +1,4 @@
-﻿"""
+"""
 ControlPlane.ai - Jurisdiction-Aware Streaming PII/PHI Masker
 Zero-copy streaming redactor using compiled DFA regex patterns.
 Supports GDPR, HIPAA, SOC2, and EU AI Act sensitive entity categories.
@@ -40,7 +40,7 @@ _PII_PATTERNS: Dict[str, re.Pattern] = {
     "PASSPORT":    re.compile(r"\b[A-Z]{1,2}\d{6,9}\b"),
     "API_KEY":     re.compile(r"\b(?:sk-|pk-|api-key-|token-)[A-Za-z0-9_\-]{16,}\b", re.I),
     "PASSWORD":    re.compile(r"(?i)\b(password|passwd|pwd|secret)\s*[:=]\s*\S+"),
-    "LOCATION_DATA": re.compile(r"\b\d{5}(?:-\d{4})?\b"),  # ZIP codes
+    "LOCATION_DATA": re.compile(r"(?i)\b(?:zip|postal(?:\s+code)?|address|location|city|state)\s*[:=]?\s*(\d{5}(?:-\d{4})?)\b|\b[A-Z]{2}\s+(\d{5}(?:-\d{4})?)\b"),  # Contextual ZIP codes
     # HIPAA-specific
     "MRN":              re.compile(r"\bMRN[-#:\s]?\d{6,10}\b", re.I),
     "HEALTH_PLAN_ID":   re.compile(r"\bHPID[-#:\s]?\d{8,12}\b", re.I),

@@ -1,4 +1,4 @@
-﻿"""
+"""
 ControlPlane.ai - Real-Time Bias & Fairness Detector
 Concurrent stereotype, demographic bias, and toxicity detection.
 Runs in the Tier 1 egress window alongside NLI and PII scanners.
@@ -51,10 +51,12 @@ _BIAS_PATTERNS: Dict[str, List[Tuple[re.Pattern, str]]] = {
          "Racially coded language detected"),
     ],
     "AGE_DISCRIMINATION": [
-        (re.compile(r"\b(old|elderly|senior)\s+(people|workers|employees)\s+(are|tend|can\'t|cannot|won\'t|too\s+old|out\s+of\s+touch)\b", re.I),
-         "Age-based generalization detected"),
+        (re.compile(r"\b(old|older|elderly|senior)\s+(people|workers|employees|developers|engineers|staff)\s+(are|tend|can\'t|cannot|won\'t|too\s+old|out\s+of\s+touch|struggle)\b", re.I),
+         "Age-based workplace capability generalization detected"),
         (re.compile(r"\b(too\s+old\s+to\s+learn|past\s+their\s+prime|out\s+of\s+touch\s+with\s+technology)\b", re.I),
          "Ageist language detected"),
+        (re.compile(r"\b(cannot\s+adapt\s+to\s+new\s+technologies|unable\s+to\s+learn\s+modern)\b", re.I),
+         "Technological ageism generalization detected"),
     ],
     "DISABILITY_BIAS": [
         (re.compile(r"\b(crazy|insane|retarded|handicapped|suffers?\s+from)\b", re.I),
@@ -87,6 +89,9 @@ _NEUTRALIZATION_RULES: List[Tuple[re.Pattern, str]] = [
         "individuals may display varying technical and behavioral traits"),
     (re.compile(r"\b(all|most)\s+asian\s+engineers\s+are\s+(naturally\s+)?better\b", re.I),
         "engineers from all backgrounds demonstrate diverse proficiencies"),
+    (re.compile(r"\b(older|senior|elderly)\s+(developers|workers|employees|staff)\s+(cannot|can\'t|struggle\s+to)\s+adapt\s+to\s+new\s+technologies\b", re.I),
+        "professionals of all experience levels continuously adapt to new technologies"),
+    (re.compile(r"\btoo\s+old\s+to\s+learn\b", re.I), "learning at every career stage"),
     (re.compile(r"\bmanly\b", re.I), "capable"),
     (re.compile(r"\bgirly\b", re.I), "thoughtful"),
     (re.compile(r"\bcrazy\b|\binsane\b", re.I), "unconventional"),

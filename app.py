@@ -14,6 +14,23 @@ import plotly.express as px
 import plotly.graph_objects as go
 from typing import List, Dict
 
+import importlib
+import controlplane.config
+import controlplane.nli_engine
+import controlplane.pii_redactor
+import controlplane.bias_detector
+import controlplane.action_engine
+import controlplane.telemetry
+import controlplane.ingress
+
+importlib.reload(controlplane.config)
+importlib.reload(controlplane.nli_engine)
+importlib.reload(controlplane.pii_redactor)
+importlib.reload(controlplane.bias_detector)
+importlib.reload(controlplane.action_engine)
+importlib.reload(controlplane.telemetry)
+importlib.reload(controlplane.ingress)
+
 from controlplane.config import DEFAULT_PROFILES, PolicyProfileType, PolicyProfile
 from controlplane.ingress import IngressGate, IngressVerdict
 from controlplane.nli_engine import NLIEngine

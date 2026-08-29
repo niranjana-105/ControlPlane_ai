@@ -1,4 +1,4 @@
-﻿"""
+"""
 ControlPlane.ai - NLI Contradiction Engine + Async AI-as-Judge
 15-token sliding window NLI, entropy-based uncertainty detection,
 and non-blocking background AI-as-Judge evaluation.
@@ -202,11 +202,13 @@ class NLIEngine:
         is_contradiction = contradiction_score >= self._contradiction_threshold
 
         # 2. Shannon entropy for hallucination/unverified claim detection
+        claims = _extract_quantitative_claims(window_text)
         entropy = _compute_shannon_entropy(window_text)
-        needs_hedging = entropy >= self._entropy_threshold
+        
+        # Hedging triggers on high ungrounded speculative entropy or quantitative unverified assertions
+        needs_hedging = (entropy >= self._entropy_threshold and bool(claims)) or (entropy >= 8.2)
 
         # 3. Hard block for extreme contradiction (>0.90) with factual claims
-        claims = _extract_quantitative_claims(window_text)
         hard_block = contradiction_score >= 0.90 and len(claims) > 2
 
         # 4. Generate fallback text (contradiction replacement)
