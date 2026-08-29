@@ -1,4 +1,4 @@
-﻿"""
+"""
 ControlPlane.ai - Tier 2 Composable Action Engine
 Distinct risk category resolver, composable text transformation pipeline,
 and category-accurate ActionType classification.
@@ -51,6 +51,8 @@ def resolve_actions(
     bias_res: BiasResult,
     session_res: SessionRiskResult,
     policy: PolicyProfile,
+    hard_block_override: bool = False,
+    hard_block_reason: Optional[str] = None,
 ) -> ActionResult:
     """
     Tier 2 Composable Action Resolver.
@@ -88,7 +90,10 @@ def resolve_actions(
     if policy.enable_session_risk_tracking and session_res.escalated:
         triggered_flags.append("SESSION_RISK_ESCALATION")
 
-    # Guaranteed full audit payload capturing all concurrent signals
+    if hard_block_override:
+        triggered_flags.append("JAILBREAK_ATTEMPT")
+        risk_categories.add("SAFETY_BLOCK")
+
     audit_payload = {
         "flags":                    triggered_flags[:],
         "categories":               list(risk_categories),
@@ -112,7 +117,7 @@ def resolve_actions(
     # -------------------------------------------------------------------
     # Step 2: Hard Block — The ONLY early termination
     # -------------------------------------------------------------------
-    if nli_res.hard_block or bias_res.severe_breach or session_res.escalated_block:
+    if hard_block_override or nli_res.hard_block or bias_res.severe_breach or session_res.escalated_block:
         triggered_flags.append("HARD_BLOCK")
         risk_categories.add("SAFETY_BLOCK")
         audit_payload["flags"] = triggered_flags
@@ -120,8 +125,9 @@ def resolve_actions(
         latency_ms = (time.perf_counter() - t0) * 1000 + max(
             pii_res.latency_ms, nli_res.latency_ms, bias_res.latency_ms
         )
+        msg = hard_block_reason or "[REQUEST TERMINATED: Content violated enterprise safety policy. This incident has been logged.]"
         return ActionResult(
-            transformed_text="[REQUEST TERMINATED: Content violated enterprise safety policy. This incident has been logged.]",
+            transformed_text=f"[HARD_BLOCK: {msg}]",
             action_type=ActionType.HARD_BLOCK,
             triggered_flags=triggered_flags,
             risk_categories=list(risk_categories),
@@ -146,8 +152,8 @@ def resolve_actions(
     if policy.enable_bias_detection and bias_res.is_biased:
         current_text = bias_res.apply_neutralizer(current_text)
 
-    # Step D: Epistemic Hedging for unverified/no-ground-truth assertions
-    if policy.enable_epistemic_hedging and nli_res.needs_hedging:
+    # Step D: Epistemic Hedging for unverified/no-ground-truth assertions (only if not contradiction)
+    if policy.enable_epistemic_hedging and nli_res.needs_hedging and not nli_res.is_contradiction:
         current_text += nli_res.hedge_suffix
 
     # -------------------------------------------------------------------

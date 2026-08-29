@@ -1,6 +1,6 @@
-﻿"""
+"""
 ControlPlane.ai - Enterprise AI Governance Console
-Clean, Modern & Intuitive UI for In-Flight LLM Governance
+Clean, High-Contrast UI for In-Flight LLM Governance
 """
 
 import streamlit as st
@@ -19,7 +19,7 @@ from controlplane.ingress import IngressGate, IngressVerdict
 from controlplane.nli_engine import NLIEngine
 from controlplane.pii_redactor import PIIRedactor
 from controlplane.bias_detector import BiasDetector
-from controlplane.action_engine import resolve_actions, ActionType
+from controlplane.action_engine import resolve_actions, ActionType, ActionResult
 from controlplane.session_state import SessionStateManager, get_or_create_session
 from controlplane.benchmark_scenarios import BenchmarkRunner, BENCHMARK_SCENARIOS
 from controlplane.telemetry import get_telemetry, compute_trustworthiness_score
@@ -37,97 +37,53 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Modern, Polished CSS
+# High-Contrast, Clean CSS (Compatible with Light and Dark Streamlit Themes)
 # ---------------------------------------------------------------------------
 st.markdown("""
 <style>
-    /* Global Font & Clean Layout */
-    .stApp {
-        background-color: #0e1117;
-        color: #e6edf3;
-    }
-    
-    /* Header Area */
-    .main-title {
-        font-size: 1.8rem;
-        font-weight: 800;
-        letter-spacing: -0.5px;
-        color: #ffffff;
-        margin-bottom: 0px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    .main-subtitle {
-        font-size: 0.95rem;
-        color: #8b949e;
-        margin-bottom: 1.2rem;
-    }
-    
-    /* Metric Cards */
+    /* Metric Cards - Clean Neutral Border */
     .metric-card {
-        background: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 10px;
-        padding: 14px 18px;
-        text-align: left;
+        background-color: #1e2430;
+        border: 1px solid #3b4455;
+        border-radius: 8px;
+        padding: 14px 16px;
+        margin-bottom: 10px;
     }
     .metric-label {
-        font-size: 0.78rem;
+        font-size: 0.8rem;
         font-weight: 600;
         text-transform: uppercase;
-        color: #8b949e;
+        color: #9aa5b5;
         letter-spacing: 0.5px;
     }
     .metric-val {
-        font-size: 1.4rem;
+        font-size: 1.35rem;
         font-weight: 700;
         color: #ffffff;
         margin-top: 4px;
     }
     
-    /* Output Boxes */
+    /* Text Boxes - Dark Charcoal High Contrast */
     .box-container {
-        border-radius: 10px;
+        border-radius: 8px;
         padding: 16px;
         min-height: 220px;
         max-height: 380px;
         overflow-y: auto;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+        font-family: Consolas, Monaco, "Courier New", monospace;
         font-size: 0.92rem;
         line-height: 1.6;
         white-space: pre-wrap;
     }
     .box-raw {
-        background-color: #1f1418;
-        border: 1px solid #ff4d4f40;
-        color: #ff9999;
+        background-color: #1a1618;
+        border: 2px solid #e05666;
+        color: #ffc9cf;
     }
     .box-gov {
-        background-color: #0d2218;
-        border: 1px solid #52c41a40;
-        color: #95de64;
-    }
-    
-    /* Status Badges */
-    .badge-pill {
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 12px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        margin-right: 6px;
-        margin-bottom: 6px;
-    }
-    .badge-red { background: #ff4d4f20; color: #ff7875; border: 1px solid #ff4d4f50; }
-    .badge-green { background: #52c41a20; color: #73d13d; border: 1px solid #52c41a50; }
-    .badge-yellow { background: #faad1420; color: #ffc53d; border: 1px solid #faad1450; }
-    .badge-blue { background: #1890ff20; color: #69c0ff; border: 1px solid #1890ff50; }
-    
-    /* Clean Divider */
-    hr {
-        margin: 1.2rem 0;
-        border-color: #30363d;
+        background-color: #141c18;
+        border: 2px solid #38a169;
+        color: #c6f6d5;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -238,8 +194,8 @@ def run_governance(prompt, text, policy, session_mgr):
 # ---------------------------------------------------------------------------
 # App Navigation
 # ---------------------------------------------------------------------------
-st.markdown('<div class="main-title">🛡️ ControlPlane.ai</div>', unsafe_allow_html=True)
-st.markdown('<div class="main-subtitle">Enterprise In-Flight AI Governance Gateway (Powered by Groq)</div>', unsafe_allow_html=True)
+st.title("🛡️ ControlPlane.ai")
+st.caption("Enterprise In-Flight AI Governance Gateway (Powered by Groq)")
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "🔬 Live Stream Inspector",
@@ -249,32 +205,25 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # ===========================================================================
-# TAB 1: LIVE STREAM INSPECTOR (Simplified & Streamlined)
+# TAB 1: LIVE STREAM INSPECTOR
 # ===========================================================================
 with tab1:
-    st.markdown("#### 1. Select a Test Scenario or Enter Custom Prompt")
+    st.subheader("1. Test Scenario & Input Prompt")
     
-    c_preset, c_empty = st.columns([3, 1])
-    with c_preset:
-        preset_choice = st.selectbox(
-            "Quick Scenario Picker:",
-            list(PRESETS.keys()),
-            index=0,
-            label_visibility="collapsed"
-        )
-    
-    prompt_input = st.text_area(
-        "User Prompt (sent live to Groq):",
-        value=PRESETS[preset_choice],
-        height=90,
-        help="Edit this text or type any custom query to test"
+    preset_choice = st.selectbox(
+        "Choose Preset Scenario (auto-fills prompt below):",
+        list(PRESETS.keys()),
+        index=0,
     )
     
-    col_btn, col_info = st.columns([1, 3])
-    with col_btn:
-        run_btn = st.button("🚀 Intercept & Govern Live Stream", type="primary", use_container_width=True)
-    with col_info:
-        st.caption(f"⚡ Streaming from **Groq ({groq_model})** with sub-5ms concurrent interception.")
+    prompt_input = st.text_area(
+        "Prompt sent live to Groq:",
+        value=PRESETS[preset_choice],
+        height=90,
+        help="Edit this text or type any custom query"
+    )
+    
+    run_btn = st.button("🚀 Intercept & Govern Live Stream", type="primary", use_container_width=True)
 
     # Execution Flow
     if run_btn:
@@ -285,10 +234,45 @@ with tab1:
         ingress_pre = ingress_gate.evaluate(prompt_input)
         
         if ingress_pre.verdict == IngressVerdict.BLOCK:
-            action_block = resolve_actions(
-                prompt_input, NLIEngine().evaluate(prompt_input),
-                PIIRedactor().redact(prompt_input), BiasDetector().evaluate(prompt_input),
-                session_mgr.evaluate(policy.session_escalation_threshold), policy
+            # Immediate Hard Block at Ingress - Zero upstream latency & cost
+            hits_str = ", ".join(ingress_pre.jailbreak_patterns_hit)
+            action_block = ActionResult(
+                transformed_text=f"[HARD_BLOCK: Malicious prompt injection / jailbreak blocked at Tier 0 Ingress: {hits_str}]",
+                action_type=ActionType.HARD_BLOCK,
+                triggered_flags=["JAILBREAK_ATTEMPT", "HARD_BLOCK"] + [f"PATTERN_{p}" for p in ingress_pre.jailbreak_patterns_hit],
+                risk_categories=["SAFETY_BLOCK"],
+                latency_ms=ingress_pre.latency_ms,
+                audit_payload={
+                    "flags": ["JAILBREAK_ATTEMPT", "HARD_BLOCK"],
+                    "categories": ["SAFETY_BLOCK"],
+                    "jailbreak_patterns": ingress_pre.jailbreak_patterns_hit,
+                    "policy_id": policy.name.value,
+                    "jurisdiction": policy.jurisdiction.value,
+                }
+            )
+            telemetry = get_telemetry()
+            telemetry.build_and_log(
+                session_id=session_mgr.session_id,
+                request_id=f"req_{int(time.time()*1000)%1000000}",
+                policy_id=policy.name.value,
+                jurisdiction=policy.jurisdiction.value,
+                prompt_hash=hashlib.sha256(prompt_input.encode()).hexdigest()[:12],
+                prompt_token_estimate=ingress_pre.estimated_tokens,
+                ingress_latency_ms=ingress_pre.latency_ms,
+                jailbreak_patterns_hit=ingress_pre.jailbreak_patterns_hit,
+                complexity_tier=ingress_pre.complexity.value,
+                cache_hit=False,
+                cache_tier="MISS",
+                action_result=action_block,
+                nli_score=1.0,
+                entropy_score=5.0,
+                bias_score=1.0,
+                pii_detected=False,
+                pii_match_count=0,
+                session_cumulative_risk=1.0,
+                judge_dispatched=False,
+                requires_human_review=True,
+                total_latency_ms=ingress_pre.latency_ms,
             )
             st.session_state["stream_results"] = (
                 prompt_input,
@@ -326,7 +310,7 @@ with tab1:
     if "stream_results" in st.session_state:
         raw_text, (ingress_res, nli_res, pii_res, bias_res, session_res, action_res, t_score, total_ms) = st.session_state["stream_results"]
         
-        st.markdown("---")
+        st.divider()
         
         # 1. Summary Metric Badges in Top Row
         c1, c2, c3, c4 = st.columns(4)
@@ -335,49 +319,45 @@ with tab1:
             st.markdown(f"""
             <div class="metric-card">
                 <div class="metric-label">Governance Action</div>
-                <div class="metric-val" style="color: #58a6ff;">{action_name}</div>
+                <div class="metric-val" style="color: #60a5fa;">{action_name}</div>
             </div>
             """, unsafe_allow_html=True)
         with c2:
-            score_color = "#3fb950" if t_score > 0.8 else ("#d29922" if t_score > 0.5 else "#f85149")
+            score_color = "#4ade80" if t_score > 0.8 else ("#facc15" if t_score > 0.5 else "#f87171")
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">Trustworthiness ({{score}}$)</div>
+                <div class="metric-label">Trust Score (T-Score)</div>
                 <div class="metric-val" style="color: {score_color};">{t_score:.2f} / 1.0</div>
             </div>
             """, unsafe_allow_html=True)
         with c3:
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">Total Latency Overhead</div>
-                <div class="metric-val" style="color: #3fb950;">{total_ms:.1f} ms</div>
+                <div class="metric-label">Interception Latency</div>
+                <div class="metric-val" style="color: #4ade80;">{total_ms:.1f} ms</div>
             </div>
             """, unsafe_allow_html=True)
         with c4:
             flag_count = len(action_res.triggered_flags)
             st.markdown(f"""
             <div class="metric-card">
-                <div class="metric-label">Audit Flags Triggered</div>
-                <div class="metric-val" style="color: {'#ff7b72' if flag_count > 0 else '#8b949e'};">{flag_count} Flags</div>
+                <div class="metric-label">Audit Flags</div>
+                <div class="metric-val" style="color: {'#f87171' if flag_count > 0 else '#9ca3af'};">{flag_count} Flags</div>
             </div>
             """, unsafe_allow_html=True)
-        
-        st.markdown("<br>", unsafe_allow_html=True)
         
         # 2. Side-by-Side Clean Comparison
         col_raw, col_gov = st.columns(2)
         with col_raw:
-            st.markdown("##### 🔴 Raw Upstream Output *(Leaked from LLM)*")
+            st.markdown("#### 🔴 Raw Upstream Output *(Leaked by LLM)*")
             st.markdown(f'<div class="box-container box-raw">{raw_text}</div>', unsafe_allow_html=True)
             
         with col_gov:
-            st.markdown("##### 🟢 Governed Output *(Safe for User)*")
+            st.markdown("#### 🟢 Governed Output *(Sanitized for User)*")
             st.markdown(f'<div class="box-container box-gov">{action_res.transformed_text}</div>', unsafe_allow_html=True)
         
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # 3. Clean Diagnostics Accordion
-        with st.expander("🔍 Click to view Interception Diagnostic Details", expanded=False):
+        # 3. Clean Diagnostics Details
+        with st.expander("🔍 Detailed Engine Diagnostics", expanded=False):
             d1, d2, d3, d4 = st.columns(4)
             with d1:
                 st.markdown("**🛡️ Ingress Gate**")
@@ -408,7 +388,7 @@ with tab1:
 # TAB 2: AUDIT & OBSERVABILITY
 # ===========================================================================
 with tab2:
-    st.markdown("### 📡 Real-Time Observability & Audit Trail")
+    st.subheader("📡 Real-Time Observability & Audit Trail")
     telemetry = get_telemetry()
     cache = get_cache()
     stats = telemetry.summary_stats()
@@ -421,8 +401,6 @@ with tab2:
         c3.metric("P95 Interception Speed", f"{stats.get('p95_latency_ms', 0):.1f} ms")
         c4.metric("Flagged Incidents", stats.get("flagged_requests", 0))
         
-        st.markdown("<br>", unsafe_allow_html=True)
-        
         col_chart, col_cache = st.columns([2, 1])
         with col_chart:
             action_dist = stats.get("action_type_distribution", {})
@@ -432,22 +410,15 @@ with tab2:
                     names=list(action_dist.keys()),
                     title="Governance Actions Distribution",
                     hole=0.45,
-                    color_discrete_sequence=["#58a6ff", "#3fb950", "#d29922", "#f85149", "#bc8cff"]
+                    color_discrete_sequence=["#60a5fa", "#4ade80", "#facc15", "#f87171", "#c084fc"]
                 )
-                fig.update_layout(
-                    height=280,
-                    margin=dict(l=20, r=20, t=40, b=20),
-                    paper_bgcolor="#161b22",
-                    plot_bgcolor="#161b22",
-                    font=dict(color="#c9d1d9")
-                )
+                fig.update_layout(height=280, margin=dict(l=20, r=20, t=40, b=20))
                 st.plotly_chart(fig, use_container_width=True)
         with col_cache:
             st.markdown("##### 🗄️ Semantic Cache Performance")
             st.write(f"**L1 Exact Hits:** {cs['l1']['hits']} / {cs['l1']['hits'] + cs['l1']['misses']} ({cs['l1']['hit_rate']*100:.1f}%)")
             st.write(f"**L2 Semantic Hits:** {cs['l2']['hits']} / {cs['l2']['hits'] + cs['l2']['misses']} ({cs['l2']['hit_rate']*100:.1f}%)")
             st.write(f"**Active Entries:** {cs['l1']['size'] + cs['l2']['size']}")
-            st.caption("Sub-millisecond prompt deduplication active.")
             
         st.markdown("##### 📋 Immutable Audit Log")
         records = telemetry.recent(10)
@@ -468,7 +439,7 @@ with tab2:
 # TAB 3: BENCHMARK SUITE
 # ===========================================================================
 with tab3:
-    st.markdown("### 📊 Automated Governance Benchmark (44 Scenarios)")
+    st.subheader("📊 Automated Governance Benchmark (44 Scenarios)")
     st.caption("Validates precision, recall, and F1 across PII, Hallucination, Bias, Composite, and Edge cases.")
     
     col_ctrl, col_chart = st.columns([1, 2])
@@ -504,7 +475,7 @@ with tab3:
 # TAB 4: HUMAN OVERSIGHT HUB
 # ===========================================================================
 with tab4:
-    st.markdown("### 🧑‍⚖️ Human-in-the-Loop Review Queue")
+    st.subheader("🧑‍⚖️ Human-in-the-Loop Review Queue")
     st.caption("Allows compliance officers to audit flagged high-risk responses and adjust weights.")
     
     if "feedback_queue" not in st.session_state:
