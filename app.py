@@ -214,7 +214,7 @@ with tab1:
     preset_choice = st.selectbox(
         "Choose Preset Scenario or Custom Prompt:",
         list(PRESETS.keys()),
-        index=1,
+        index=0,
         help="Select a scenario to auto-fill the prompt, or select Custom to write your own."
     )
     
