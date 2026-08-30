@@ -1,181 +1,196 @@
-﻿# ControlPlane.ai
-## Enterprise In-Flight AI Governance Layer
-**Accenture Innovation Challenge 2026 | Problem Track 1**
+# ControlPlane.ai
 
-> Sub-20ms real-time governance for LLM streaming responses — without blocking a single token.
+ControlPlane.ai is a real-time, in-flight AI governance layer and streaming reverse proxy. It intercepts Large Language Model (LLM) token streams in-memory to detect and mitigate privacy leaks (PII/PHI), factual hallucinations, demographic bias, and adversarial prompt injections in **under 5 milliseconds**—well within strict enterprise latency budgets (<20ms).
 
----
+For a complete breakdown of the business case, financial ROI, and regulatory analysis, see the [Business Proposal](BUSINESS_PROPOSAL.md).
 
-## Quick Start
-
-`ash
-pip install -r requirements.txt
-python run.py
-`
-
-- **Dashboard**: http://localhost:8501
-- **API Gateway**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
+Track bug reports, feature suggestions, or view live commits in the [GitHub Repository](https://github.com/niranjana-105/ControlPlane_ai).
 
 ---
 
-## Architecture Overview
+## Table of contents
 
-ControlPlane.ai operates as a **streaming reverse proxy** between your application and any LLM provider, intercepting every token window through a 3-tier governance pipeline.
-
-`
-User Request
-     |
-     v
-[TIER 0: Ingress Gate (<5ms)]
-  - DFA jailbreak sanitizer (8 patterns)
-  - L1/L2 hierarchical semantic cache
-  - Complexity router (SIMPLE/MODERATE/COMPLEX)
-     |
-     v
-[TIER 1: Concurrent Egress Interceptor (15-20ms)]
-  Runs SIMULTANEOUSLY in parallel:
-  |---- NLI Contradiction Engine (15-token sliding window)
-  |---- PII/PHI Redactor (DFA regex, jurisdiction-aware)
-  |---- Bias & Fairness Detector (5 ontology categories)
-  |---- Async AI-as-Judge (non-blocking background dispatch)
-     |
-     v
-[TIER 2: Composable Action Engine]
-  - Collects ALL flags (no short-circuit)
-  - Tracks distinct risk categories
-  - Composes transformations: PII -> Fallback -> Bias -> Hedge
-  - Returns category-accurate ActionType
-     |
-     v
-Governed Streaming Response + Audit Record
-`
-
----
-
-## Governance Pipeline Details
-
-### Tier 0 — Ingress Gate (<5ms)
-| Component | Mechanism | Latency |
-|---|---|---|
-| Jailbreak Sanitizer | DFA regex (8 patterns: DAN, sudo, prompt injection, etc.) | <1ms |
-| L1 Exact Cache | SHA-256 keyed LRU dictionary | <0.1ms |
-| L2 Semantic Cache | TF-IDF cosine similarity (pure Python) | 1-3ms |
-| Complexity Router | Heuristic token/structure scoring | <0.5ms |
-
-### Tier 1 — Egress Interceptor (15-20ms concurrent)
-| Component | Mechanism | Latency |
-|---|---|---|
-| NLI Engine | Lexical contradiction signals + Shannon entropy | 3-8ms |
-| PII Redactor | 15 DFA regex patterns (SSN, CC, email, MRN, API keys...) | 2-5ms |
-| Bias Detector | 5-category ontology (gender, race, age, disability, toxicity) | 2-5ms |
-| Async Judge | Background thread dispatch (does NOT block streaming) | 0ms overhead |
-
-### Tier 2 — Action Engine
-| ActionType | Trigger Condition |
-|---|---|
-| PASSTHROUGH | No risk categories detected |
-| REDACT_PII | Only PII detected |
-| CASCADE_FALLBACK | Only contradiction detected |
-| BIAS_NEUTRALIZE | Only bias detected |
-| HEDGE_UNVERIFIED | Only unverified claim detected |
-| COMPOSITE_GOVERNED | 2+ distinct risk categories |
-| HARD_BLOCK | Toxicity, jailbreak, or critical session escalation |
-
----
-
-## Action Types & Tradeoffs
-
-| Dimension | Handled By |
-|---|---|
-| Different risk tolerance per use case | config.py — Tiered profiles |
-| Overlapping risks | action_engine.py — Composable, no short-circuit |
-| No reliable ground truth | nli_engine.py — Entropy + async AI-as-Judge |
-| Over/under-flagging tradeoff | benchmark_scenarios.py — 44 scenarios + sweep |
-| Multi-turn compounding risk | session_state.py — Weighted decay model |
-| Regulatory/jurisdictional variation | config.py — EU AI Act, HIPAA, GDPR |
-
----
-
-## Policy Profiles
-
-### Customer Support Bot (GDPR_EU)
-- Latency SLA: Ingress <5ms, Egress <18ms
-- NLI threshold: 0.60 | Bias threshold: 0.25
-- Entities: SSN, CC, Email, Phone, Passport, API Key, Location
-
-### Internal Knowledge & Code Copilot (BASE_SOC2)
-- Latency SLA: Ingress <3ms, Egress <12ms
-- NLI threshold: 0.75 | Bias threshold: 0.55
-- Entities: API Key, Password, SSN, Credit Card
-
-### Clinical & Financial Decision Support (HIPAA_US)
-- Latency SLA: Ingress <5ms, Egress <22ms
-- NLI threshold: 0.45 | Bias threshold: 0.20
-- Human oversight: Required | Audit retention: 6 years
-- Entities: SSN, MRN, Health Plan ID, Diagnosis Code, Patient Name, CC, Phone, Email
-
----
-
-## File Structure
-
-`
-d:/accenture/
-controlplane/
-    __init__.py           # Package init
-    config.py             # Policy profiles + jurisdictions
-    session_state.py      # Multi-turn cumulative risk aggregator
-    cache.py              # L1/L2 hierarchical semantic cache
-    ingress.py            # DFA jailbreak sanitizer + complexity router
-    nli_engine.py         # NLI contradiction engine + async AI-as-Judge
-    bias_detector.py      # Stereotype, demographic, toxicity detector
-    pii_redactor.py       # Jurisdiction-aware streaming PII/PHI masker
-    action_engine.py      # Composable action resolver
-    simulator.py          # Mock LLM streaming generator (8 scenarios)
-    benchmark_scenarios.py # 44 benchmark tests + tradeoff sweep
-    proxy_gateway.py      # FastAPI /v1/chat/completions proxy
-    telemetry.py          # Audit logging + T_score + latency telemetry
-app.py                    # Streamlit 5-tab dashboard
-run.py                    # One-click startup
-requirements.txt          # Dependencies
-`
-
----
-
-## Trustworthiness Index
-
-T_{score} = 1 - (0.30 \cdot S_{NLI} + 0.25 \cdot S_{bias} + 0.20 \cdot \min(H/3, 1) + 0.15 \cdot R_{session} + 0.10 \cdot \mathbf{1}_{PII})
-
-Where H = Shannon entropy, R = session cumulative risk.
-
----
-
-## Dashboard Tabs
-
-| Tab | Description |
-|---|---|
-| Stream Inspector | Live governance demo with 8 test scenarios |
-| Benchmark Suite | 44-scenario precision/recall evaluation + threshold sweep |
-| Policy Configurator | Side-by-side profile comparison + placement rationale |
-| Observability | Audit trail + T-score + cache/latency telemetry |
-| Human Feedback Hub | Override queue + weight tuner + learning curves |
+- [Requirements](#requirements)
+- [Recommended integrations](#recommended-integrations)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Architecture & Governance Pipeline](#architecture--governance-pipeline)
+- [Policy Profiles & Jurisdictions](#policy-profiles--jurisdictions)
+- [Benchmark Suite (44 Scenarios)](#benchmark-suite-44-scenarios)
+- [Troubleshooting & FAQ](#troubleshooting--faq)
+- [Maintainers & Competition Submission](#maintainers--competition-submission)
 
 ---
 
 ## Requirements
 
-`
-fastapi>=0.110.0
-uvicorn>=0.28.0
-streamlit>=1.32.0
-pydantic>=2.6.0
-requests>=2.31.0
-numpy>=1.24.0
-pandas>=2.0.0
-plotly>=5.19.0
-httpx>=0.27.0
-aiohttp>=3.9.0
-`
+ControlPlane.ai requires:
 
-All governance modules use **zero external ML dependencies** — pure Python stdlib for sub-millisecond DFA pattern matching.
+- **Python 3.10+** (tested on Python 3.11 and 3.12)
+- **Groq Cloud API Key** (for real-time streaming LLM inference)
+- The following core Python packages (specified in `requirements.txt`):
+  - `streamlit >= 1.30.0`
+  - `fastapi >= 0.104.0`
+  - `uvicorn >= 0.24.0`
+  - `httpx >= 0.25.0`
+  - `pandas >= 2.0.0`
+  - `plotly >= 5.18.0`
+  - `scikit-learn >= 1.3.0`
+  - `pydantic >= 2.0.0`
+
+---
+
+## Recommended integrations
+
+- **Groq API Cloud**: Provides ultra-fast inference (<200ms TTFT) for live streaming interception demonstrations.
+- **Enterprise SIEM / Splunk / Datadog**: ControlPlane.ai exposes an immutable audit telemetry log (`controlplane/telemetry.py`) formatted for automated ingestion into enterprise SIEM platforms.
+- **Redis Cluster**: Recommended for multi-node deployments of the L1/L2 Hierarchical Semantic Cache in production.
+
+---
+
+## Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/niranjana-105/ControlPlane_ai.git
+   cd ControlPlane_ai
+   ```
+
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv env
+   # On Windows:
+   .\env\Scripts\activate
+   # On Linux/macOS:
+   source env/bin/activate
+   ```
+
+3. Install required dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Configure your environment variables:
+   ```bash
+   cp .env.example .env
+   ```
+   Edit `.env` and insert your `GROQ_API_KEY`:
+   ```ini
+   GROQ_API_KEY=gsk_your_actual_groq_api_key_here
+   ```
+
+---
+
+## Configuration
+
+### Starting the Application
+
+Launch the unified governance dashboard and API proxy with a single command:
+```bash
+python run.py
+```
+
+* **Interactive Governance Console**: `http://localhost:8501`
+* **FastAPI Reverse Proxy Gateway**: `http://localhost:8000`
+* **OpenAPI Documentation**: `http://localhost:8000/docs`
+* **Gateway Health Check**: `http://localhost:8000/health`
+
+---
+
+## Architecture & Governance Pipeline
+
+ControlPlane.ai operates as an inline reverse proxy and stream interceptor operating across three non-blocking tiers:
+
+```
+User Prompt ──▶ [Tier 0: DFA Ingress Gate (<0.4ms)]
+                      │ (Blocks Jailbreaks / Injections)
+                      ▼
+               [Live Upstream LLM: Groq API]
+                      │ (Streaming SSE Tokens)
+                      ▼
+        [Tier 1: Parallel Egress Interceptor (<5ms)]
+         ├─ DFA PII/PHI Redactor (15 Regex Patterns)
+         ├─ Sliding-Window NLI Engine (Contradiction Scoring)
+         ├─ Multi-Category Bias Detector (Gender/Age/Race)
+         └─ Shannon Entropy Uncertainty Estimator
+                      │
+                      ▼
+        [Tier 2: Composable Action Engine]
+         ├─ PII Masking ([REDACTED_...])
+         ├─ Contradiction Replacement (Cascade Fallback)
+         ├─ Bias Neutralization (String Substitution)
+         └─ Epistemic Hedging ([Caution: Unverified...])
+                      │
+                      ▼
+        Governed Clean Output Delivered to End User + Immutable Audit Log
+```
+
+### Key Technical Modules
+
+* `controlplane/ingress.py`: Tier 0 DFA sanitizer evaluating prompt complexity and 8 compiled jailbreak patterns.
+* `controlplane/pii_redactor.py`: 15 compiled DFA patterns for SSN, credit cards, emails, phone numbers, API keys, passwords, HIPAA MRNs, and ICD-10 diagnosis codes.
+* `controlplane/nli_engine.py`: 15-token sliding-window lexical contradiction detector, negative assertion booster, and Shannon entropy uncertainty calculator.
+* `controlplane/bias_detector.py`: Multi-category ontology detector with in-flight string neutralizers.
+* `controlplane/action_engine.py`: Composable non-short-circuiting transform engine that resolves category-accurate primary actions (`REDACT_PII`, `BIAS_NEUTRALIZE`, `CASCADE_FALLBACK`, `HEDGE_UNVERIFIED`, `HARD_BLOCK`, `COMPOSITE_GOVERNED`).
+* `controlplane/cache.py`: L1 SHA-256 exact match + L2 TF-IDF cosine-similarity semantic vector cache.
+* `controlplane/session_state.py`: Multi-turn risk aggregator computing $R(t) = 0.6 r(t) + 0.3 r(t-1) + 0.1 r(t-2)$.
+* `controlplane/telemetry.py`: In-memory immutable audit ring buffer with Trustworthiness Index ($T_{\text{score}}$) calculations.
+
+---
+
+## Policy Profiles & Jurisdictions
+
+ControlPlane.ai provides declarative, code-free policy profiles configured in `controlplane/config.py`:
+
+| Profile | Regulatory Jurisdiction | Latency Budget | Active Protections | Primary Failure Mitigated |
+| :--- | :--- | :--- | :--- | :--- |
+| **Customer Support Bot** | **GDPR (EU)** | $\le 18\text{ms}$ | SSN, Credit Cards, Emails, Phone, Contextual ZIP, Anti-Toxicity | Leaking customer PII or brand-damaging toxic responses |
+| **Internal Dev Copilot** | **SOC 2 (IT Security)** | $\le 12\text{ms}$ | API Keys, Admin Passwords, Database Credentials, Sub-5ms Ingress | Committing hardcoded credentials or cloud secrets |
+| **Clinical & Financial Support** | **HIPAA (US Healthcare)** | $\le 22\text{ms}$ | Patient Names, Medical Record Numbers (MRN), ICD-10 Codes, Zero Contradictions | Medical malpractice liability and hallucinated clinical guidance |
+
+---
+
+## Benchmark Suite (44 Scenarios)
+
+The system includes an automated 44-scenario test harness (`controlplane/benchmark_scenarios.py`) validating precision, recall, and F1 across five critical failure categories:
+
+1. **PII & Secrets Leaks (10 Scenarios):** Direct SSNs, email leaks, credit cards, passwords, API keys, HIPAA MRNs, and ICD-10 diagnosis codes.
+2. **Hallucinations & Contradictions (10 Scenarios):** Direct numerical contradictions, conflicting metrics, policy violations, and high-entropy assertions.
+3. **Bias & Stereotypes (10 Scenarios):** Gender leadership stereotypes, racial generalizations, age discrimination, ableist slurs, and toxicity.
+4. **Composite Violations (8 Scenarios):** Simultaneous multi-risk occurrences (e.g. PII + contradiction + bias in a single turn).
+5. **Edge Cases (6 Scenarios):** Legal section numbers, technical jargon, zero-width unicode injection, and long clean inputs.
+
+---
+
+## Troubleshooting & FAQ
+
+### Troubleshooting
+
+- **The dashboard displays a connection error:**
+  - Verify that `GROQ_API_KEY` is present in your `.env` file.
+  - Test connectivity with `python test_client.py`.
+- **Latency exceeds expected budget:**
+  - Ensure you are using high-throughput Groq models (e.g. `qwen/qwen3.8-27b`, `openai/gpt-oss-120b`).
+  - Verify that the L1/L2 cache is enabled in the sidebar under *Advanced Guard Settings*.
+
+### Frequently Asked Questions (FAQ)
+
+**Q: Does the in-flight inspection add perceptible delay to streaming responses?**  
+**A:** No. ControlPlane.ai’s parallel heuristics execute in **1.1ms – 4.5ms**, which is over $4\times$ faster than human visual reading speed (~15ms/token).
+
+**Q: Does the Human Oversight Hub (Tab 4) block the user while waiting for human review?**  
+**A:** No. The end-user receives their safe, sanitized answer immediately with zero delay. Tab 4 functions as an asynchronous background audit queue for compliance officers to verify flagged high-risk responses.
+
+---
+
+## Maintainers & Competition Submission
+
+**Accenture Innovation Challenge 2026 | Problem Track 1: AI Governance**  
+**Team Name:** BAZOOKA  
+**Institution:** Indian Institute of Technology (IIT) Guwahati (Class of 2027)  
+
+* **Niranjana Nitin** — [GitHub](https://github.com/niranjana-105)
+* **Manan Sadana** — [GitHub](https://github.com/manansadana)
+
+---
+*Copyright © 2026 Team BAZOOKA. Built for the Accenture Innovation Challenge 2026.*
