@@ -82,10 +82,12 @@ def _extract_quantitative_claims(text: str) -> List[str]:
 def _score_contradiction(text: str, premise: Optional[str] = None) -> float:
     """
     Heuristic contradiction score [0.0-1.0].
-    Combines lexical signal density + negation pattern count.
+    Combines lexical signal density + negation pattern count + quantitative claim density.
     """
     signals = _CONTRADICTION_RE.findall(text)
     signal_density = min(len(signals) / max(len(text.split()), 1) * 10, 1.0)
+    claims = _FACTUAL_CLAIM_RE.findall(text)
+    claim_boost = min(len(claims) * 0.08, 0.25) if len(signals) > 0 else 0.0
 
     # Negation boost if premise is provided
     negation_boost = 0.0
@@ -96,7 +98,7 @@ def _score_contradiction(text: str, premise: Optional[str] = None) -> float:
         negation_count = len(re.findall(r"\bnot?\b|\bno\b|\bnever\b", text, re.I))
         negation_boost = min(negation_count * 0.15 * (overlap / max(len(premise_keywords), 1)), 0.4)
 
-    return round(min(signal_density + negation_boost, 1.0), 4)
+    return round(min(signal_density + claim_boost + negation_boost, 1.0), 4)
 
 
 # ---------------------------------------------------------------------------

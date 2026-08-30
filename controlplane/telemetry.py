@@ -113,6 +113,8 @@ def compute_trustworthiness_score(
 # Telemetry Store (In-Memory Ring Buffer)
 # ---------------------------------------------------------------------------
 
+_PERSISTENT_RECORDS: List[AuditRecord] = []
+
 class TelemetryStore:
     """
     In-memory immutable audit log with configurable ring-buffer size.
@@ -120,7 +122,8 @@ class TelemetryStore:
     """
 
     def __init__(self, max_records: int = 10_000):
-        self._records: List[AuditRecord] = []
+        global _PERSISTENT_RECORDS
+        self._records = _PERSISTENT_RECORDS
         self._max_records = max_records
 
     def log(self, record: AuditRecord) -> None:
