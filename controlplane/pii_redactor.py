@@ -11,6 +11,102 @@ from typing import List, Dict, Set, Optional, Tuple, Pattern
 from enum import Enum
 
 
+# ---------------------------------------------------------------------------
+# Lazy spaCy NER Model Loader
+# Falls back silently if spaCy or the model is not installed.
+# ---------------------------------------------------------------------------
+
+_nlp = None          # spaCy NLP pipeline (loaded on first use)
+_ner_available = None  # None = not checked yet; True/False after first load
+
+
+def _get_ner_model():
+    """
+    Lazy-loads the spaCy en_core_web_sm model on first call.
+    Returns the model if available, None if spaCy is not installed.
+    """
+    global _nlp, _ner_available
+    if _ner_available is None:
+        try:
+            import spacy  # noqa: PLC0415
+            try:
+                _nlp = spacy.load("en_core_web_sm")
+            except OSError:
+                # Model not downloaded yet — auto-download
+                import subprocess, sys
+                subprocess.run(
+                    [sys.executable, "-m", "spacy", "download", "en_core_web_sm"],
+                    capture_output=True, check=False
+                )
+                try:
+                    _nlp = spacy.load("en_core_web_sm")
+                except OSError:
+                    _nlp = None
+            _ner_available = _nlp is not None
+        except ImportError:
+            _ner_available = False
+            _nlp = None
+    return _nlp if _ner_available else None
+
+
+# NER entity labels → PII category names
+_NER_ENTITY_MAP = {
+    "PERSON": "PERSON_NAME",    # Full person names — critical for HIPAA patient names, GDPR
+    "GPE": "LOCATION",          # Countries, cities, states
+    "LOC": "LOCATION",          # Natural locations, landmarks
+}
+
+# Which sensitive_entity keys enable each NER category
+_NER_TRIGGER_ENTITIES = {
+    "PERSON_NAME": {"PERSON_NAME", "PATIENT_NAME"},   # Either key activates PERSON NER
+    "LOCATION": {"LOCATION_DATA"},                     # GDPR location data
+}
+
+
+def _apply_ner_redaction(
+    text: str,
+    active_entities: Set[str],
+) -> Tuple[str, List[str], int]:
+    """
+    Runs spaCy NER on text and redacts detected entities.
+    Processes spans right-to-left to preserve character indices during replacement.
+    Returns (redacted_text, detected_pii_types, match_count).
+    """
+    nlp = _get_ner_model()
+    if nlp is None:
+        return text, [], 0
+
+    doc = nlp(text)
+    replacements: List[Tuple[int, int, str]] = []  # (start, end, pii_type)
+
+    for ent in doc.ents:
+        pii_category = _NER_ENTITY_MAP.get(ent.label_)
+        if not pii_category:
+            continue
+        # Check if any triggering sensitive entity is active in this policy
+        trigger_set = _NER_TRIGGER_ENTITIES.get(pii_category, set())
+        if not trigger_set.intersection(active_entities):
+            continue
+        replacements.append((ent.start_char, ent.end_char, pii_category))
+
+    if not replacements:
+        return text, [], 0
+
+    # Sort right-to-left so index positions remain valid as we replace
+    replacements.sort(key=lambda x: x[0], reverse=True)
+    detected_types: List[str] = []
+    match_count = 0
+
+    for start, end, pii_type in replacements:
+        replacement_label = f"[REDACTED_{pii_type}]"
+        text = text[:start] + replacement_label + text[end:]
+        if pii_type not in detected_types:
+            detected_types.append(pii_type)
+        match_count += 1
+
+    return text, detected_types, match_count
+
+
 class RedactionMode(str, Enum):
     MASK = "MASK"           # Replace with [REDACTED_<TYPE>]
     TOKENIZE = "TOKENIZE"   # Replace with reversible token (for auditing)
@@ -67,19 +163,23 @@ _JURISDICTION_ENTITIES: Dict[str, Set[str]] = {
 
 class PIIRedactor:
     """
-    Streaming-compatible DFA-based PII/PHI redactor.
-    Applies only the patterns matching the active sensitive_entities set.
+    Streaming-compatible DFA-based PII/PHI redactor, augmented with spaCy NER.
+    Stage 1: 15 compiled regex DFA patterns (structured PII — SSN, credit cards, API keys).
+    Stage 2: spaCy NER (unstructured PII — person names, locations that regex cannot detect).
+    NER stage only activates when enable_ner=True and the policy has relevant entities.
     """
 
     def __init__(
         self,
         sensitive_entities: Optional[Set[str]] = None,
         mode: RedactionMode = RedactionMode.MASK,
+        enable_ner: bool = False,
     ):
         # Default to base SOC2 set
         self._entities = sensitive_entities or _JURISDICTION_ENTITIES["BASE_SOC2"]
         self._mode = mode
-        # Pre-select active patterns
+        self._enable_ner = enable_ner
+        # Pre-select active regex patterns
         self._active_patterns: Dict[str, re.Pattern] = {
             name: pat for name, pat in _PII_PATTERNS.items() if name in self._entities
         }
@@ -90,6 +190,7 @@ class PIIRedactor:
         detected_types: List[str] = []
         total_matches = 0
 
+        # --- Stage 1: Regex DFA patterns (structured PII) ---
         for entity_type, pattern in self._active_patterns.items():
             matches = pattern.findall(redacted)
             if matches:
@@ -97,6 +198,16 @@ class PIIRedactor:
                 total_matches += len(matches)
                 replacement = f"[REDACTED_{entity_type}]"
                 redacted = pattern.sub(replacement, redacted)
+
+        # --- Stage 2: spaCy NER (unstructured PII — names, locations) ---
+        if self._enable_ner and redacted.strip():
+            ner_redacted, ner_types, ner_count = _apply_ner_redaction(redacted, self._entities)
+            if ner_types:
+                redacted = ner_redacted
+                for t in ner_types:
+                    if t not in detected_types:
+                        detected_types.append(t)
+                total_matches += ner_count
 
         latency_ms = (time.perf_counter() - t0) * 1000
 
@@ -124,6 +235,6 @@ class PIIRedactor:
         }
 
     @staticmethod
-    def from_jurisdiction(jurisdiction_name: str, mode: RedactionMode = RedactionMode.MASK) -> "PIIRedactor":
+    def from_jurisdiction(jurisdiction_name: str, mode: RedactionMode = RedactionMode.MASK, enable_ner: bool = False) -> "PIIRedactor":
         entities = _JURISDICTION_ENTITIES.get(jurisdiction_name, _JURISDICTION_ENTITIES["BASE_SOC2"])
-        return PIIRedactor(sensitive_entities=entities, mode=mode)
+        return PIIRedactor(sensitive_entities=entities, mode=mode, enable_ner=enable_ner)

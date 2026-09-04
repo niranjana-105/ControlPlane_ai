@@ -139,10 +139,19 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 def build_pipeline(policy):
     ingress = IngressGate()
-    nli = NLIEngine(contradiction_threshold=policy.nli_contradiction_threshold,
-                    entropy_threshold=policy.entropy_uncertainty_threshold, enable_async_judge=True)
-    pii = PIIRedactor(sensitive_entities=policy.sensitive_entities)
-    bias = BiasDetector(bias_threshold=policy.bias_threshold)
+    nli = NLIEngine(
+        contradiction_threshold=policy.nli_contradiction_threshold,
+        entropy_threshold=policy.entropy_uncertainty_threshold,
+        enable_async_judge=policy.enable_llm_judge,  # Real Groq AI judge when enabled
+    )
+    pii = PIIRedactor(
+        sensitive_entities=policy.sensitive_entities,
+        enable_ner=policy.enable_ner_pii,  # spaCy NER for names/locations
+    )
+    bias = BiasDetector(
+        bias_threshold=policy.bias_threshold,
+        enable_llm_classifier=policy.enable_llm_bias_classifier,  # Groq zero-shot classifier
+    )
     return ingress, nli, pii, bias
 
 def run_governance(prompt, text, policy, session_mgr):
@@ -154,8 +163,8 @@ def run_governance(prompt, text, policy, session_mgr):
     ingress_res = ingress.evaluate(prompt)
     nli_res = nli.evaluate(text)
     pii_res = pii.redact(text)
-    bias_res = bias.evaluate(text)
     session_res = session_mgr.evaluate(policy.session_escalation_threshold)
+    bias_res = bias.evaluate(text, session_id=session_res.session_id)  # Pass session_id for LLM classifier
     action_res = resolve_actions(text, nli_res, pii_res, bias_res, session_res, policy)
     total_ms = (time.perf_counter() - t0) * 1000
     
@@ -184,6 +193,8 @@ def run_governance(prompt, text, policy, session_mgr):
         judge_dispatched=nli_res.judge_dispatched,
         requires_human_review=policy.requires_human_oversight_log or action_res.action_type == ActionType.HARD_BLOCK,
         total_latency_ms=total_ms,
+        judge_job_id=nli_res.judge_job_id,
+        classifier_job_id=bias_res.classifier_job_id,
     )
     
     t_score = compute_trustworthiness_score(
@@ -374,18 +385,57 @@ with tab1:
                 st.write(f"Latency: {pii_res.latency_ms:.2f}ms")
                 if pii_res.detected:
                     st.error(f"Entities: {', '.join(pii_res.pii_types)}")
+                ner_types = [t for t in pii_res.pii_types if t in ("PERSON_NAME", "LOCATION")]
+                if ner_types:
+                    st.info(f"🤖 spaCy NER: {', '.join(ner_types)}")
             with d3:
                 st.markdown("**⚖️ Bias Detector**")
                 st.write(f"Detected: {'YES' if bias_res.is_biased else 'NO'}")
                 st.write(f"Score: {bias_res.score:.2f}")
                 if bias_res.is_biased:
                     st.warning(f"Category: {', '.join(bias_res.categories)}")
+                if bias_res.classifier_job_id:
+                    st.info("🤖 LLM Classifier: dispatched")
             with d4:
                 st.markdown("**🧠 Factual Grounding**")
                 st.write(f"Contradiction: {'YES' if nli_res.is_contradiction else 'NO'}")
                 st.write(f"Entropy ($): {nli_res.entropy:.2f}")
                 if nli_res.needs_hedging:
                     st.info("Epistemic Hedge Appended")
+                if nli_res.judge_job_id:
+                    st.info("🤖 AI Judge: dispatched")
+
+        # 4. AI Judge Status Panel
+        with st.expander("🤖 AI Judge (Background LLM Evaluation)", expanded=False):
+            if nli_res.judge_dispatched and nli_res.judge_job_id:
+                st.success(f"✅ Real Groq AI Judge dispatched in background (Job: `{nli_res.judge_job_id}`)")
+                st.info(
+                    "The AI Judge is evaluating this response for contradiction, hallucination, "
+                    "and bias using a real LLM call. Results appear in **Tab 4 → Human Oversight Hub** "
+                    "within ~5 seconds — with full LLM reasoning."
+                )
+                # Try to retrieve verdict if already complete
+                try:
+                    from controlplane.ai_judge import get_ai_judge
+                    verdict = get_ai_judge().get_result(nli_res.judge_job_id)
+                    if verdict:
+                        st.markdown("**🎯 AI Judge Verdict (Completed)**")
+                        cols = st.columns(3)
+                        cols[0].metric("Contradiction", f"{verdict.contradiction_score:.2f}")
+                        cols[1].metric("Hallucination", f"{verdict.hallucination_score:.2f}")
+                        cols[2].metric("Bias", f"{verdict.bias_score:.2f}")
+                        st.markdown(f"**Reasoning:** _{verdict.reasoning}_")
+                        st.caption(f"Model: `{verdict.model_used}` | Success: {verdict.success}")
+                    else:
+                        st.caption("⏳ Judge still evaluating... check Tab 4 in ~5 seconds.")
+                except Exception:
+                    st.caption("Judge result not yet available.")
+                if bias_res.classifier_job_id:
+                    st.divider()
+                    st.success(f"✅ LLM Bias Classifier dispatched (Job: `{bias_res.classifier_job_id}`)")
+                    st.caption("Catches implicit bias that regex cannot detect. Results logged to audit trail.")
+            else:
+                st.info("AI Judge was not triggered for this request (no risk signals detected, or judge disabled for this policy).")
 
 # ===========================================================================
 # TAB 2: AUDIT & OBSERVABILITY

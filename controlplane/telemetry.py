@@ -59,7 +59,14 @@ class AuditRecord:
     # Regulatory
     requires_human_review: bool
     judge_dispatched: bool
+    # Regulatory Flags
     regulatory_flags: List[str] = field(default_factory=list)
+
+    # AI Judge Results (populated async after stream delivery)
+    judge_verdict: Optional[Dict] = field(default=None)
+    llm_bias_verdict: Optional[Dict] = field(default=None)
+    judge_job_id: Optional[str] = field(default=None)
+    classifier_job_id: Optional[str] = field(default=None)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -154,6 +161,8 @@ class TelemetryStore:
         judge_dispatched: bool,
         requires_human_review: bool,
         total_latency_ms: float,
+        judge_job_id: Optional[str] = None,
+        classifier_job_id: Optional[str] = None,
     ) -> AuditRecord:
         t_score = compute_trustworthiness_score(
             nli_score=nli_score,
@@ -199,6 +208,8 @@ class TelemetryStore:
             requires_human_review=requires_human_review,
             judge_dispatched=judge_dispatched,
             regulatory_flags=regulatory_flags,
+            judge_job_id=judge_job_id,
+            classifier_job_id=classifier_job_id,
         )
         self.log(record)
         return record

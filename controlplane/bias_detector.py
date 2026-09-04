@@ -19,6 +19,7 @@ class BiasResult:
     latency_ms: float
     violations: List[str]        # Human-readable violation descriptions
     neutralized_text: Optional[str] = None
+    classifier_job_id: Optional[str] = None  # job_id for async LLM bias classifier verdict
 
     def apply_neutralizer(self, text: str) -> str:
         """Apply the neutralizer to a given text (used in action engine composition)."""
@@ -116,14 +117,18 @@ def _apply_neutralization_rules(text: str) -> str:
 class BiasDetector:
     """
     Real-time multi-category bias detector.
+    Stage 1 (inline, <1ms): Regex ontology patterns — catches explicit stereotypes.
+    Stage 2 (async, background): Groq zero-shot LLM classifier — catches implicit bias.
     Runs concurrently with NLI and PII in the Tier 1 egress interceptor.
     """
 
-    def __init__(self, bias_threshold: float = 0.25, enabled_categories: Optional[Set[str]] = None):
+    def __init__(self, bias_threshold: float = 0.25, enabled_categories: Optional[Set[str]] = None,
+                 enable_llm_classifier: bool = False):
         self._threshold = bias_threshold
         self._enabled = enabled_categories or set(_BIAS_PATTERNS.keys())
+        self._enable_llm_classifier = enable_llm_classifier
 
-    def evaluate(self, text: str) -> BiasResult:
+    def evaluate(self, text: str, session_id: str = "default") -> BiasResult:
         t0 = time.perf_counter()
 
         hit_categories: List[str] = []
@@ -131,6 +136,7 @@ class BiasDetector:
         severe = False
         total_hits = 0
 
+        # --- Stage 1: Regex ontology scan (inline, explicit bias) ---
         for category, patterns in _BIAS_PATTERNS.items():
             if category not in self._enabled:
                 continue
@@ -157,6 +163,18 @@ class BiasDetector:
 
         latency_ms = (time.perf_counter() - t0) * 1000
 
+        # --- Stage 2: Async Groq zero-shot LLM classifier (implicit bias, background) ---
+        # Dispatches only when text is non-trivial. Never blocks the stream.
+        classifier_job_id: Optional[str] = None
+        if self._enable_llm_classifier and text and len(text.split()) > 5:
+            try:
+                from controlplane.llm_classifier import get_llm_classifier
+                classifier_job_id = get_llm_classifier().dispatch_bias_check(
+                    text, session_id=session_id
+                )
+            except Exception:
+                pass  # Classifier failure must never affect the inline governance path
+
         return BiasResult(
             is_biased=is_biased,
             severe_breach=severe,
@@ -165,6 +183,7 @@ class BiasDetector:
             latency_ms=round(latency_ms, 3),
             violations=violations,
             neutralized_text=neutralized,
+            classifier_job_id=classifier_job_id,
         )
 
     def update_threshold(self, threshold: float) -> None:

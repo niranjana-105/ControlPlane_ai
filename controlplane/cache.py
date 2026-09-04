@@ -1,17 +1,49 @@
-﻿"""
+"""
 ControlPlane.ai - L1/L2 Hierarchical Semantic Cache
 L1: SHA-256 exact-match dictionary (sub-millisecond)
-L2: Lightweight TF-IDF cosine-similarity semantic cache (1-3ms)
+L2: Sentence-transformer embedding cache (semantic similarity, ~5ms)
+     Falls back to TF-IDF cosine similarity if sentence-transformers is unavailable.
 """
 
 import hashlib
 import time
 import math
 import re
+import numpy as np
 from collections import Counter, OrderedDict
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple, Any
 
+
+# ---------------------------------------------------------------------------
+# Lazy sentence-transformer model loader
+# ---------------------------------------------------------------------------
+
+_embedding_model = None      # SentenceTransformer instance
+_use_embeddings = None       # None = not yet checked; True/False after first call
+
+
+def _get_embedding_model():
+    """
+    Lazy-loads all-MiniLM-L6-v2 on first call (~80MB, CPU-friendly, ~5ms inference).
+    Returns the model if sentence-transformers is installed, None otherwise.
+    Falls back to TF-IDF silently.
+    """
+    global _embedding_model, _use_embeddings
+    if _use_embeddings is None:
+        try:
+            from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+            _use_embeddings = True
+        except (ImportError, Exception):
+            _use_embeddings = False
+            _embedding_model = None
+    return _embedding_model if _use_embeddings else None
+
+
+# ---------------------------------------------------------------------------
+# Cache Data Models
+# ---------------------------------------------------------------------------
 
 @dataclass
 class CacheEntry:
@@ -19,7 +51,7 @@ class CacheEntry:
     response_text: str
     created_at: float
     hits: int = 0
-    token_vector: Optional[Dict[str, float]] = None
+    token_vector: Optional[Any] = None   # numpy array (embeddings) OR Dict[str,float] (TF-IDF)
 
 
 @dataclass
@@ -31,6 +63,10 @@ class CacheResult:
     latency_ms: float
     cache_key: Optional[str] = None
 
+
+# ---------------------------------------------------------------------------
+# L1: SHA-256 Exact Match Cache
+# ---------------------------------------------------------------------------
 
 class L1ExactCache:
     """SHA-256 keyed exact-match cache with LRU eviction."""
@@ -74,8 +110,17 @@ class L1ExactCache:
                 "hit_rate": self.hits / max(1, self.hits + self.misses)}
 
 
+# ---------------------------------------------------------------------------
+# L2: Semantic Cache (Sentence Embeddings → TF-IDF fallback)
+# ---------------------------------------------------------------------------
+
 class L2SemanticCache:
-    """TF-IDF + cosine-similarity semantic cache. Pure Python, no ML deps."""
+    """
+    Semantic similarity cache using sentence-transformer embeddings.
+    Catches semantically equivalent prompts regardless of wording:
+      'What is my SSN?' ≈ 'Tell me my social security number' (cosine ~0.82)
+    Falls back to TF-IDF cosine similarity if sentence-transformers is not installed.
+    """
 
     def __init__(self, max_size: int = 256, ttl_seconds: int = 3600):
         self._entries: List[CacheEntry] = []
@@ -83,6 +128,25 @@ class L2SemanticCache:
         self._ttl = ttl_seconds
         self.hits = 0
         self.misses = 0
+        self._backend: str = "unknown"   # "embeddings" or "tfidf"
+
+    # --- Vector building ---
+
+    def _build_vector(self, text: str) -> Any:
+        """
+        Returns a sentence embedding (numpy array) if available,
+        else a TF-IDF term-frequency dict.
+        """
+        model = _get_embedding_model()
+        if model is not None:
+            self._backend = "embeddings"
+            vec = model.encode(text, convert_to_numpy=True, show_progress_bar=False)
+            return vec
+        else:
+            self._backend = "tfidf"
+            return self._tf(self._tokenize(text))
+
+    # --- TF-IDF fallback helpers ---
 
     @staticmethod
     def _tokenize(text: str) -> List[str]:
@@ -93,11 +157,22 @@ class L2SemanticCache:
         total = max(len(tokens), 1)
         return {tok: count / total for tok, count in counts.items()}
 
-    def _build_vector(self, text: str) -> Dict[str, float]:
-        return self._tf(self._tokenize(text))
+    # --- Cosine similarity (handles both numpy arrays and TF-IDF dicts) ---
 
     @staticmethod
-    def _cosine_similarity(va: Dict[str, float], vb: Dict[str, float]) -> float:
+    def _cosine_similarity(va: Any, vb: Any) -> float:
+        if va is None or vb is None:
+            return 0.0
+        # Numpy embedding vectors
+        if isinstance(va, np.ndarray) and isinstance(vb, np.ndarray):
+            norm_a = float(np.linalg.norm(va))
+            norm_b = float(np.linalg.norm(vb))
+            if norm_a == 0.0 or norm_b == 0.0:
+                return 0.0
+            return float(np.dot(va, vb) / (norm_a * norm_b))
+        # TF-IDF dict fallback
+        if not isinstance(va, dict) or not isinstance(vb, dict):
+            return 0.0
         if not va or not vb:
             return 0.0
         common = set(va) & set(vb)
@@ -108,9 +183,16 @@ class L2SemanticCache:
             return 0.0
         return dot / (mag_a * mag_b)
 
-    def get(self, prompt: str, threshold: float = 0.94) -> Tuple[Optional[CacheEntry], float]:
+    # --- Cache operations ---
+
+    def get(self, prompt: str, threshold: float = 0.80) -> Tuple[Optional[CacheEntry], float]:
+        """
+        Threshold 0.80 works well for sentence embeddings — catches same-meaning different-wording.
+        TF-IDF fallback uses 0.94 (vocabulary-only matching needs strict threshold).
+        """
         now = time.time()
         query_vec = self._build_vector(prompt)
+        effective_threshold = threshold if self._backend == "embeddings" else 0.94
         best_entry = None
         best_score = 0.0
         for entry in self._entries:
@@ -120,7 +202,7 @@ class L2SemanticCache:
             if score > best_score:
                 best_score = score
                 best_entry = entry
-        if best_entry and best_score >= threshold:
+        if best_entry and best_score >= effective_threshold:
             best_entry.hits += 1
             self.hits += 1
             return best_entry, best_score
@@ -137,13 +219,18 @@ class L2SemanticCache:
 
     def stats(self) -> Dict[str, Any]:
         return {"size": len(self._entries), "hits": self.hits, "misses": self.misses,
-                "hit_rate": self.hits / max(1, self.hits + self.misses)}
+                "hit_rate": self.hits / max(1, self.hits + self.misses),
+                "backend": self._backend}
 
+
+# ---------------------------------------------------------------------------
+# HierarchicalCache: L1 → L2 → MISS
+# ---------------------------------------------------------------------------
 
 class HierarchicalCache:
-    """Tiered cache: L1 (exact) -> L2 (semantic) -> MISS."""
+    """Tiered cache: L1 (exact SHA-256) → L2 (semantic embedding) → MISS."""
 
-    def __init__(self, l1_max_size=1024, l2_max_size=256, ttl_seconds=3600, similarity_threshold=0.94):
+    def __init__(self, l1_max_size=1024, l2_max_size=256, ttl_seconds=3600, similarity_threshold=0.80):
         self.l1 = L1ExactCache(max_size=l1_max_size, ttl_seconds=ttl_seconds)
         self.l2 = L2SemanticCache(max_size=l2_max_size, ttl_seconds=ttl_seconds)
         self._threshold = similarity_threshold
@@ -160,7 +247,7 @@ class HierarchicalCache:
             return CacheResult(hit=True, tier="L2_SEMANTIC", response=entry.response_text,
                                similarity_score=round(score, 4), latency_ms=(time.perf_counter()-t0)*1000,
                                cache_key=entry.prompt_hash)
-        return CacheResult(hit=False, tier="MISS", response=None, similarity_score=0.0,
+        return CacheResult(hit=False, tier="MISS", response=None, similarity_score=round(score, 4),
                            latency_ms=(time.perf_counter()-t0)*1000)
 
     def store(self, prompt: str, response: str) -> None:
@@ -169,12 +256,22 @@ class HierarchicalCache:
         self.l2.put(prompt, response)
 
     def stats(self) -> Dict[str, Any]:
-        return {"l1": self.l1.stats(), "l2": self.l2.stats(), "threshold": self._threshold}
+        return {
+            "l1": self.l1.stats(),
+            "l2": self.l2.stats(),
+            "threshold": self._threshold,
+            "embedding_backend": self.l2._backend,
+        }
 
+
+# ---------------------------------------------------------------------------
+# Module-level singleton
+# ---------------------------------------------------------------------------
 
 _global_cache: Optional[HierarchicalCache] = None
 
-def get_cache(l1_max_size=1024, l2_max_size=256, ttl_seconds=3600, similarity_threshold=0.94) -> HierarchicalCache:
+
+def get_cache(l1_max_size=1024, l2_max_size=256, ttl_seconds=3600, similarity_threshold=0.80) -> HierarchicalCache:
     global _global_cache
     if _global_cache is None:
         _global_cache = HierarchicalCache(l1_max_size, l2_max_size, ttl_seconds, similarity_threshold)

@@ -49,6 +49,11 @@ class PolicyProfile:
     enable_bias_detection: bool = True
     enable_session_risk_tracking: bool = True
     enable_epistemic_hedging: bool = True
+
+    # AI/ML Upgrades
+    enable_ner_pii: bool = False           # spaCy NER for unstructured PII (names, locations)
+    enable_llm_judge: bool = True          # Real Groq AI-as-Judge (async, background)
+    enable_llm_bias_classifier: bool = True  # Groq zero-shot implicit bias classifier (async)
     
     # Jurisdiction-Specific Sensitive Entity Categories
     sensitive_entities: Set[str] = field(default_factory=lambda: {
@@ -94,9 +99,13 @@ DEFAULT_PROFILES: Dict[PolicyProfileType, PolicyProfile] = {
         enable_nli_grounding=True,
         enable_bias_detection=True,
         enable_session_risk_tracking=True,
-        sensitive_entities={"SSN", "CREDIT_CARD", "EMAIL", "PHONE", "PASSPORT", "API_KEY", "LOCATION_DATA"},
+        sensitive_entities={"SSN", "CREDIT_CARD", "EMAIL", "PHONE", "PASSPORT", "API_KEY",
+                             "LOCATION_DATA", "PERSON_NAME"},
         audit_retention_days=730,
-        requires_human_oversight_log=False
+        requires_human_oversight_log=False,
+        enable_ner_pii=True,               # GDPR: catch customer names + locations via NER
+        enable_llm_judge=True,
+        enable_llm_bias_classifier=True,
     ),
     
     PolicyProfileType.INTERNAL_COPILOT: PolicyProfile(
@@ -117,7 +126,10 @@ DEFAULT_PROFILES: Dict[PolicyProfileType, PolicyProfile] = {
         enable_session_risk_tracking=True,
         sensitive_entities={"API_KEY", "PASSWORD", "SSN", "CREDIT_CARD"},
         audit_retention_days=365,
-        requires_human_oversight_log=False
+        requires_human_oversight_log=False,
+        enable_ner_pii=False,              # SOC2: secrets are structured, NER not needed
+        enable_llm_judge=True,
+        enable_llm_bias_classifier=True,
     ),
     
     PolicyProfileType.CLINICAL_FINANCIAL: PolicyProfile(
@@ -136,8 +148,12 @@ DEFAULT_PROFILES: Dict[PolicyProfileType, PolicyProfile] = {
         enable_nli_grounding=True,
         enable_bias_detection=True,
         enable_session_risk_tracking=True,
-        sensitive_entities={"SSN", "MRN", "HEALTH_PLAN_ID", "DIAGNOSIS_CODE", "PATIENT_NAME", "CREDIT_CARD", "PHONE", "EMAIL"},
+        sensitive_entities={"SSN", "MRN", "HEALTH_PLAN_ID", "DIAGNOSIS_CODE", "PATIENT_NAME",
+                             "CREDIT_CARD", "PHONE", "EMAIL"},
         audit_retention_days=2190,
-        requires_human_oversight_log=True
+        requires_human_oversight_log=True,
+        enable_ner_pii=True,               # HIPAA: spaCy NER catches patient names regex misses
+        enable_llm_judge=True,
+        enable_llm_bias_classifier=True,
     )
 }

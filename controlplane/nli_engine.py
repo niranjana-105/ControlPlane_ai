@@ -27,6 +27,7 @@ class NLIResult:
     latency_ms: float
     judge_dispatched: bool = False
     claims_extracted: List[str] = field(default_factory=list)
+    judge_job_id: Optional[str] = None   # job_id for the real AI judge (retrievable from ai_judge.py)
 
 
 # ---------------------------------------------------------------------------
@@ -107,9 +108,10 @@ def _score_contradiction(text: str, premise: Optional[str] = None) -> float:
 
 class AsyncJudgeDispatcher:
     """
-    Non-blocking background AI-as-Judge dispatcher.
-    Sends completed responses for deep evaluation without blocking streaming tokens.
-    Stores results in a thread-safe callback registry.
+    Real AI-as-Judge dispatcher backed by Groq LLM.
+    Sends completed responses for deep LLM evaluation without blocking streaming tokens.
+    The background thread calls the actual Groq API and stores a structured JudgeVerdict.
+    Falls back to heuristic scores if the API is unavailable.
     """
 
     def __init__(self):
@@ -122,36 +124,61 @@ class AsyncJudgeDispatcher:
         session_id: str,
         on_complete: Optional[Callable[[str, Dict], None]] = None,
     ) -> str:
-        """Fire-and-forget: dispatch a background deep evaluation."""
+        """Fire-and-forget: dispatches a real Groq LLM evaluation in a background daemon thread."""
         job_id = hashlib.sha256(f"{session_id}{time.time_ns()}".encode()).hexdigest()[:12]
 
         def _background_evaluate():
-            time.sleep(0.05)  # Simulate async network call to judge LLM
-            result = {
-                "job_id": job_id,
-                "session_id": session_id,
-                "hallucination_score": self._simulate_judge_score(response_text),
-                "factual_consistency": self._simulate_factual_score(response_text),
-                "completed_at": time.time(),
-            }
+            # --- REAL AI JUDGE: calls Groq LLM instead of simulating ---
+            try:
+                from controlplane.ai_judge import get_ai_judge
+                judge = get_ai_judge()
+                verdict = judge._call_groq_judge(response_text, job_id, session_id)
+                result = {
+                    "job_id": verdict.job_id,
+                    "session_id": verdict.session_id,
+                    "hallucination_score": verdict.hallucination_score,
+                    "factual_consistency": max(0.0, 1.0 - verdict.contradiction_score),
+                    "contradiction_score": verdict.contradiction_score,
+                    "bias_score": verdict.bias_score,
+                    "reasoning": verdict.reasoning,
+                    "model_used": verdict.model_used,
+                    "completed_at": verdict.completed_at,
+                    "success": verdict.success,
+                    "error": verdict.error,
+                }
+            except Exception as e:
+                # Graceful fallback to heuristic scores if judge is unavailable
+                result = {
+                    "job_id": job_id,
+                    "session_id": session_id,
+                    "hallucination_score": self._heuristic_hallucination_score(response_text),
+                    "factual_consistency": self._heuristic_factual_score(response_text),
+                    "contradiction_score": 0.0,
+                    "bias_score": 0.0,
+                    "reasoning": f"Fallback heuristic (judge error: {str(e)[:60]})",
+                    "model_used": "heuristic_fallback",
+                    "completed_at": time.time(),
+                    "success": False,
+                    "error": str(e),
+                }
             with self._lock:
                 self._pending[job_id] = result
             if on_complete:
                 on_complete(job_id, result)
 
-        thread = threading.Thread(target=_background_evaluate, daemon=True)
+        thread = threading.Thread(target=_background_evaluate, daemon=True, name=f"ai-judge-{job_id[:6]}")
         thread.start()
         return job_id
 
     @staticmethod
-    def _simulate_judge_score(text: str) -> float:
-        """Simulated hallucination score (0=grounded, 1=hallucinated)."""
+    def _heuristic_hallucination_score(text: str) -> float:
+        """Fallback heuristic hallucination score when LLM judge is unavailable."""
         claims = _FACTUAL_CLAIM_RE.findall(text)
         return min(len(claims) * 0.15, 1.0)
 
     @staticmethod
-    def _simulate_factual_score(text: str) -> float:
-        """Simulated factual consistency (0=inconsistent, 1=consistent)."""
+    def _heuristic_factual_score(text: str) -> float:
+        """Fallback heuristic factual consistency when LLM judge is unavailable."""
         entropy = _compute_shannon_entropy(text)
         return max(0.0, 1.0 - (entropy / 5.0))
 
@@ -226,10 +253,11 @@ class NLIEngine:
         hedge_idx = min(int(entropy * 10) % len(_HEDGE_PHRASES), len(_HEDGE_PHRASES) - 1)
         hedge_suffix = _HEDGE_PHRASES[hedge_idx] if needs_hedging else ""
 
-        # 6. Dispatch async judge for deep evaluation (non-blocking)
+        # 6. Dispatch real AI-as-Judge for deep LLM evaluation (non-blocking, zero stream overhead)
         judge_dispatched = False
+        judge_job_id: Optional[str] = None
         if self._async_judge and (is_contradiction or needs_hedging or claims):
-            self._dispatcher.dispatch(window_text, session_id)
+            judge_job_id = self._dispatcher.dispatch(window_text, session_id)
             judge_dispatched = True
 
         latency_ms = (time.perf_counter() - t0) * 1000
@@ -245,6 +273,7 @@ class NLIEngine:
             latency_ms=round(latency_ms, 3),
             judge_dispatched=judge_dispatched,
             claims_extracted=claims,
+            judge_job_id=judge_job_id,
         )
 
     def update_thresholds(self, contradiction: float, entropy: float) -> None:
